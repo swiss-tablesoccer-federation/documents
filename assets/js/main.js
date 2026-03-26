@@ -1,7 +1,6 @@
 /* ── Configuration ───────────────────────────────────────── */
-var SHARE_URL      = 'https://1drv.ms/f/c/753cbab9de4f01b4/IgA0lMh6_4xeTKD4BOpLF1fUAULxtA4SPcECipRoj-ND88g?e=gnpKvG';
-var SHARE_PASSWORD = 'ziqbyw-kyrjo4-Gecqaq';
-var GRAPH_BASE     = 'https://graph.microsoft.com/v1.0';
+var SHARE_URL  = 'https://1drv.ms/f/c/753cbab9de4f01b4/IgA0lMh6_4xeTKD4BOpLF1fUAULxtA4SPcECipRoj-ND88g';
+var GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 
 /* ── Helpers ─────────────────────────────────────────────── */
 
@@ -63,9 +62,7 @@ function fetchExternalUrl(downloadUrl) {
  */
 function fetchShare(shareId, path) {
   var url = GRAPH_BASE + '/shares/' + shareId + path;
-  return fetch(url, {
-    headers: { 'X-OneDrive-Password': SHARE_PASSWORD }
-  }).then(function (resp) {
+  return fetch(url).then(function (resp) {
     if (!resp.ok) {
       return resp.json().catch(function () { return {}; }).then(function (body) {
         var msg = (body.error && body.error.message) ? body.error.message : ('HTTP ' + resp.status);
