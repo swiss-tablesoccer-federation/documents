@@ -1,14 +1,9 @@
 /* ── Configuration ───────────────────────────────────────── */
 var SHARE_URL  = 'https://1drv.ms/f/c/753cbab9de4f01b4/IgA0lMh6_4xeTKD4BOpLF1fUAXQyejtyXdNVOIGVzOBwNVc';
+var SHARE_ID   = 'u!aHR0cHM6Ly8xZHJ2Lm1zL2YvYy83NTNjYmFiOWRlNGYwMWI0L0lnQTBsTWg2XzR4ZVRLRDRCT3BMRjFmVUFYUXllanR5WGROVk9JR1Z6T0J3TlZj';
 var GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 
 /* ── Helpers ─────────────────────────────────────────────── */
-
-/** Encode a sharing URL to a Graph API share ID. */
-function encodeShareId(url) {
-  var b64 = btoa(url).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  return 'u!' + b64;
-}
 
 /** HTML-escape a string to prevent XSS. */
 function esc(str) {
@@ -84,7 +79,7 @@ function fetchShare(shareId, path) {
  *   { type: 'external', url: '<external URL extracted from .txt file>' }
  */
 function loadDocuments() {
-  var shareId = encodeShareId(SHARE_URL);
+  var shareId = SHARE_ID;
 
   return fetchShare(shareId, '/root/children').then(function (rootData) {
     var folders = (rootData.value || []).filter(function (item) {
