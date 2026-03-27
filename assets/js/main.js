@@ -1,7 +1,6 @@
 /* ── Configuration ───────────────────────────────────────── */
-var SHARE_URL  = 'https://1drv.ms/f/c/753cbab9de4f01b4/IgA0lMh6_4xeTKD4BOpLF1fUAXQyejtyXdNVOIGVzOBwNVc';
-var SHARE_ID   = 'u!aHR0cHM6Ly8xZHJ2Lm1zL2YvYy83NTNjYmFiOWRlNGYwMWI0L0lnQTBsTWg2XzR4ZVRLRDRCT3BMRjFmVUFYUXllanR5WGROVk9JR1Z6T0J3TlZj';
-var GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
+var SHARE_URL = 'https://1drv.ms/f/c/753cbab9de4f01b4/IgA0lMh6_4xeTKD4BOpLF1fUAXQyejtyXdNVOIGVzOBwNVc'; // used as fallback link in showError()
+var API_BASE  = 'https://api.swisstablesoccer.ch';
 
 /* ── Helpers ─────────────────────────────────────────────── */
 
@@ -48,101 +47,81 @@ function fetchExternalUrl(downloadUrl) {
     });
 }
 
-/* ── OneDrive / Graph API ────────────────────────────────── */
+/* ── OneDrive (via PHP proxy) ────────────────────────────── */
 
 /**
- * Fetch JSON from the Graph shares API.
- * @param {string} shareId - Encoded share ID (u!…)
- * @param {string} path    - API sub-path, e.g. '/root/children'
- */
-function fetchShare(shareId, path) {
-  var url = GRAPH_BASE + '/shares/' + shareId + path;
-  return fetch(url).then(function (resp) {
-    if (!resp.ok) {
-      return resp.json().catch(function () { return {}; }).then(function (body) {
-        var msg = (body.error && body.error.message) ? body.error.message : ('HTTP ' + resp.status);
-        throw new Error(msg);
-      });
-    }
-    return resp.json();
-  });
-}
-
-/**
- * Load all subfolder names and their documents (PDFs and external-link placeholders)
- * from the OneDrive share.
- * Returns a Promise that resolves to an array of section objects:
- *   [ { name: 'Folder', docs: { 'DocName': { DE: {type,url}, FR: {type,url}, IT: {type,url} } } }, … ]
+ * Load all subfolder names and their documents (PDFs and external-link
+ * placeholders) from the PHP proxy endpoint that fetches OneDrive content
+ * via the OneDrive personal API using a server-side anonymous session.
  *
- * Each version object has:
+ * Returns a Promise that resolves to an array of section objects:
+ *   [ { name: 'Folder', docs: { 'DocName': { DE: {type,url}, … } } }, … ]
+ *
+ * Each version object:
  *   { type: 'pdf',      url: '<download URL>' }
  *   { type: 'external', url: '<external URL extracted from .txt file>' }
  */
 function loadDocuments() {
-  var shareId = SHARE_ID;
-
-  return fetchShare(shareId, '/root/children').then(function (rootData) {
-    var folders = (rootData.value || []).filter(function (item) {
-      return item.folder;
-    });
-    folders.sort(function (a, b) {
-      return a.name.localeCompare(b.name);
-    });
-
-    var promises = folders.map(function (folder) {
-      var encodedName = encodeURIComponent(folder.name);
-      return fetchShare(shareId, '/root:/' + encodedName + ':/children')
-        .then(function (folderData) {
-          var docs = {};
-          var txtPromises = [];
-
-          (folderData.value || []).forEach(function (item) {
-            if (!item.file) return;
-
-            if (/\.pdf$/i.test(item.name)) {
-              var parsed = parseFileName(item.name, 'pdf');
-              if (!parsed) return;
-              if (!docs[parsed.base]) docs[parsed.base] = {};
-              docs[parsed.base][parsed.lang] = {
-                type: 'pdf',
-                url:  item['@microsoft.graph.downloadUrl'] || item.webUrl || null
-              };
-
-            } else if (/\.txt$/i.test(item.name)) {
-              var parsed = parseFileName(item.name, 'txt');
-              if (!parsed) return;
-              var dlUrl = item['@microsoft.graph.downloadUrl'] || null;
-              if (!dlUrl) return;
-
-              /* Capture loop variables for the async closure */
-              (function (base, lang, downloadUrl) {
-                txtPromises.push(
-                  fetchExternalUrl(downloadUrl).then(function (externalUrl) {
-                    if (!externalUrl) return;
-                    if (!docs[base]) docs[base] = {};
-                    docs[base][lang] = { type: 'external', url: externalUrl };
-                  }).catch(function () { /* skip unreadable files */ })
-                );
-              }(parsed.base, parsed.lang, dlUrl));
-            }
-          });
-
-          return Promise.all(txtPromises).then(function () {
-            return { name: folder.name, docs: docs };
-          });
-        })
-        .catch(function () {
-          /* Skip folders that cannot be read */
-          return null;
+  return fetch(API_BASE + '/onedrive')
+    .then(function (resp) {
+      if (!resp.ok) {
+        return resp.json().catch(function () { return {}; }).then(function (body) {
+          var msg = body.error ? body.error : ('HTTP ' + resp.status);
+          throw new Error(msg);
         });
-    });
+      }
+      return resp.json();
+    })
+    .then(function (rootItems) {
+      /* rootItems is an array of folder objects returned by the PHP proxy:
+       * [ { type:'folder', name:'00_Statuten', children: [ {type:'file', name:'...', downloadUrl:'...', webUrl:'...'}, … ] }, … ] */
+      var folders = (rootItems || []).filter(function (item) {
+        return item.type === 'folder';
+      });
 
-    return Promise.all(promises).then(function (sections) {
-      return sections.filter(function (s) {
-        return s && Object.keys(s.docs).length > 0;
+      var txtPromises = [];
+      var sections = [];
+
+      folders.forEach(function (folder) {
+        var docs = {};
+
+        (folder.children || []).forEach(function (item) {
+          if (item.type !== 'file') return;
+
+          var fileUrl = item.downloadUrl || item.webUrl || null;
+
+          if (/\.pdf$/i.test(item.name)) {
+            var parsed = parseFileName(item.name, 'pdf');
+            if (!parsed || !fileUrl) return;
+            if (!docs[parsed.base]) docs[parsed.base] = {};
+            docs[parsed.base][parsed.lang] = { type: 'pdf', url: fileUrl };
+
+          } else if (/\.txt$/i.test(item.name)) {
+            var parsed = parseFileName(item.name, 'txt');
+            if (!parsed || !fileUrl) return;
+
+            /* Capture loop variables for the async closure */
+            (function (base, lang, downloadUrl, sectionDocs) {
+              txtPromises.push(
+                fetchExternalUrl(downloadUrl).then(function (externalUrl) {
+                  if (!externalUrl) return;
+                  if (!sectionDocs[base]) sectionDocs[base] = {};
+                  sectionDocs[base][lang] = { type: 'external', url: externalUrl };
+                }).catch(function () { /* skip unreadable files */ })
+              );
+            }(parsed.base, parsed.lang, fileUrl, docs));
+          }
+        });
+
+        sections.push({ name: folder.name, docs: docs });
+      });
+
+      return Promise.all(txtPromises).then(function () {
+        return sections.filter(function (s) {
+          return Object.keys(s.docs).length > 0;
+        });
       });
     });
-  });
 }
 
 /* ── Rendering ───────────────────────────────────────────── */
